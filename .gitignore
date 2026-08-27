@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data — never commit raw/downloaded datasets
+data/raw/**
+!data/raw/.gitkeep
+data/cache/
+*.npy
+*.npz
+
+# Outputs — checkpoints stay local by default (opt in per-file); other
+# deliverable outputs (robustness tables, error analysis notes, etc.)
+# are trackable by default. predictions.json is excluded specifically:
+# it's infer.py's run-specific output for whatever directory you point
+# it at, not a fixed deliverable — its content changes with every run.
+outputs/checkpoints/**
+!outputs/checkpoints/.gitkeep
+!outputs/checkpoints/phase4_model.pt
+outputs/predictions.json
+
+# Secrets
+.env
+*.key
+credentials.json
+**/secrets/**
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+wandb/

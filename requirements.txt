@@ -1,0 +1,28 @@
+# Core ML
+torch>=2.2
+torchvision>=0.17
+open_clip_torch>=2.24
+
+# Data handling
+numpy>=1.26
+pandas>=2.2
+Pillow>=10.2
+scikit-learn>=1.4
+pyyaml>=6.0
+
+# Dataset download
+huggingface_hub>=0.21
+datasets>=2.18
+kagglehub>=0.2
+
+# Augmentation / image transforms
+opencv-python-headless>=4.9
+
+# Near-duplicate leakage check (Section 2.2)
+imagehash>=4.3
+
+# Stretch: LoRA fine-tuning (Phase 4b)
+peft>=0.10
+
+# Progress bars, misc
+tqdm>=4.66

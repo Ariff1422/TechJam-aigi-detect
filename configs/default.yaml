@@ -1,0 +1,71 @@
+# Default config — placeholder values per PLAN.md Section 4.
+# Every value here is referenced by name in PLAN.md; don't rename keys
+# without updating the corresponding section.
+
+seed: 42  # PLAN.md Section 2.2 / Phase 4 — fixed seed for split + training reproducibility
+
+# --- Backbone (PLAN.md Section 1.1, 1.1b, 1.3) ---
+backbone:
+  family: clip_vitb32  # clip_vitb32 | clip_vitl14 | dinov2_vitl14 | dinov3_vitl16
+  pretrained: openai   # open_clip pretrained tag; ignored for dinov2/dinov3
+  embedding_dim: 512   # verify with a shape check before trusting this — 512 (ViT-B/32) or 768 (ViT-L/14)
+  frozen: true         # PLAN.md Section 1.2 — never fine-tune the backbone itself outside the LoRA stretch goal
+
+# --- Adaptation / head (PLAN.md Section 1.2, Section 7.1) ---
+adaptation:
+  method: frozen_linear  # frozen_linear | frozen_mlp | lora
+  mlp_hidden_dim: 256     # used only if method == frozen_mlp
+  dropout: 0.3            # used only if method == frozen_mlp
+  lora:
+    rank: 16               # r=16-32 per PLAN.md Section 4b/7.1
+    target_blocks: 2        # number of trailing transformer blocks to adapt
+
+# --- Data (PLAN.md Section 2) ---
+data:
+  dataset: SID_Set        # primary dataset per Section 2.1; CIFAKE used only for Phase 1 plumbing
+  subsample_size: 17500    # within the 15,000-20,000 range, Section 2.2
+  split:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+  dedup_check: phash        # phash | embedding — near-duplicate leakage check, Section 2.2
+
+# --- Augmentation / robustness (PLAN.md Section 3) ---
+transforms:
+  held_in:                     # trained on every epoch, distortion_prob = 1.0 (Section 3.2)
+    - name: jpeg
+      severities: [90, 70, 50, 30]
+    - name: gaussian_blur
+      severities: [0.5, 1.0, 2.0]
+    - name: color_jitter
+      severities: [0.20]        # brightness/contrast/saturation +-20%
+    - name: center_crop
+      severities: [0.80]        # crop to 80%
+  held_out:                    # never applied during training — genuine generalization test (Section 3.2, 6)
+    - name: resize
+      severities: [0.5, 0.25]
+    - name: gaussian_noise
+      severities: [0.02, 0.05, 0.10]
+  distortion_prob: 1.0          # NTIRE 2026 finding — augment every training image, Section 3.2
+
+# --- Training (PLAN.md Phase 4) ---
+train:
+  optimizer: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  batch_size: 256
+  max_epochs: 50
+  early_stopping_metric: val_auc
+  early_stopping_patience: 5
+
+# --- Evaluation (PLAN.md Section 6) ---
+eval:
+  classification_threshold: 0.5  # default per Section 6; document if calibrated instead
+
+# --- Paths ---
+paths:
+  raw_data_dir: data/raw
+  splits_dir: data/splits
+  checkpoints_dir: outputs/checkpoints
+  predictions_out: outputs/predictions.json
+  robustness_table_out: outputs/robustness_table.csv
