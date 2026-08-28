@@ -2,14 +2,23 @@
 
 Given a model checkpoint (or --random-model for the harness sanity check)
 and a labeled image folder (subfolders REAL/ and FAKE/, matching the
-CIFAKE/SID_Set convention used elsewhere in this repo), runs every
-transform x severity combination from Section 3.1 plus the Section 3.4
-stacked/combined worst-case tests, and outputs an accuracy/AUC table,
-one row per cell.
+CIFAKE/SID_Set convention used elsewhere in this repo), computes and
+caches embeddings for every transform x severity combination from
+Section 3.1 plus the Section 3.4 stacked/combined worst-case tests, then
+scores them into an accuracy/AUC table, one row per cell.
+
+Embeddings are cached per-condition to disk (one .npz per cell, atomic
+write, skip-if-exists resume) rather than held in memory for one long
+single-shot run that writes nothing until the very end — the earlier
+design lost all progress to an external kill partway through a ~40min
+run, twice. Now a kill loses at most one condition's worth of work, and
+re-scoring at a different threshold (e.g. comparing 0.5 vs. a calibrated
+value) is pure array math against the cache, not a rerun of the backbone.
 """
 import argparse
 import os
 
+import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
@@ -18,7 +27,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from src.checkpoint import load_model_from_checkpoint
 from src.features import extract_embeddings_from_images, load_backbone
 from src.model import build_head
-from src.transforms import TRANSFORM_GRID, apply_chain, apply_transform
+from src.transforms import HELD_OUT_TRANSFORMS, TRANSFORM_GRID, apply_chain, apply_transform
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -43,18 +52,84 @@ def collect_labeled_paths(labeled_dir: str, max_per_class: int = None):
     return paths, labels
 
 
-def evaluate_cell(images, labels, model, preprocess, head, device, threshold: float):
-    embeddings = extract_embeddings_from_images(images, model, preprocess, device).to(device)
-    with torch.no_grad():
-        logits = head(embeddings)
-        probs = torch.sigmoid(logits).cpu().numpy()
-    preds = (probs >= threshold).astype(int)
-    acc = accuracy_score(labels, preds)
-    try:
-        auc = roc_auc_score(labels, probs)
-    except ValueError:
-        auc = float("nan")  # only one class present in labels
-    return acc, auc
+def condition_list():
+    """Returns [(cell_name, severity_label, held_out, transform_fn_or_None)],
+    where transform_fn_or_None(img) -> img; None means clean (no transform)."""
+    conditions = [("clean", "n/a", False, None)]
+    for transform_name, severities in TRANSFORM_GRID.items():
+        held_out = transform_name in HELD_OUT_TRANSFORMS
+        for severity in severities:
+            conditions.append((
+                transform_name, str(severity), held_out,
+                lambda img, n=transform_name, s=severity: apply_transform(img, n, s),
+            ))
+    for chain_name, steps in STACKED_CHAINS.items():
+        conditions.append((
+            f"STACKED:{chain_name}", "+".join(f"{n}={s}" for n, s in steps), False,
+            lambda img, st=steps: apply_chain(img, st),
+        ))
+    return conditions
+
+
+def cache_condition_embeddings(cache_dir, source_images, labels, model, preprocess, device, batch_size=32):
+    """Computes and caches one .npz per condition (transform/severity
+    cell), skipping any cell already cached. Returns nothing — read back
+    with load_cached_condition_embeddings for scoring."""
+    os.makedirs(cache_dir, exist_ok=True)
+    conditions = condition_list()
+
+    for cell_name, severity_label, held_out, transform_fn in conditions:
+        # Sanitize for use in a filename — cell names contain ':' (STACKED:...)
+        # and severity labels contain '/' (n/a) or '+'/'=' (stacked chain steps).
+        safe_name = cell_name.replace(":", "_")
+        safe_severity = severity_label.replace("/", "-").replace("=", "-").replace("+", "_")
+        cache_path = os.path.join(cache_dir, f"{safe_name}__{safe_severity}.npz")
+        if os.path.exists(cache_path):
+            print(f"[{cell_name} sev={severity_label}] already cached, skipping")
+            continue
+
+        images = source_images if transform_fn is None else [transform_fn(img) for img in source_images]
+        embeddings = extract_embeddings_from_images(images, model, preprocess, device, batch_size).numpy()
+
+        np.savez_compressed(
+            cache_path + ".tmp.npz",
+            embeddings=embeddings,
+            labels=np.array(labels, dtype=np.int64),
+            transform=cell_name,
+            severity=severity_label,
+            held_out=held_out,
+        )
+        os.replace(cache_path + ".tmp.npz", cache_path)
+        print(f"[{cell_name} sev={severity_label}] cached ({embeddings.shape[0]} embeddings)")
+
+
+def score_cached_conditions(cache_dir, head, device, threshold):
+    """Reads back every cached condition and scores it at the given
+    threshold — pure array math, no backbone calls."""
+    rows = []
+    for fname in sorted(os.listdir(cache_dir)):
+        if not fname.endswith(".npz"):
+            continue
+        d = np.load(os.path.join(cache_dir, fname), allow_pickle=True)
+        embeddings = torch.from_numpy(d["embeddings"]).float().to(device)
+        labels = d["labels"]
+        with torch.no_grad():
+            logits = head(embeddings)
+            probs = torch.sigmoid(logits).cpu().numpy()
+        preds = (probs >= threshold).astype(int)
+        acc = accuracy_score(labels, preds)
+        try:
+            auc = roc_auc_score(labels, probs)
+        except ValueError:
+            auc = float("nan")
+        rows.append({
+            "transform": str(d["transform"]),
+            "severity": str(d["severity"]),
+            "held_out": bool(d["held_out"]),
+            "accuracy": acc,
+            "auc": auc,
+        })
+    return pd.DataFrame(rows)
 
 
 def main():
@@ -67,6 +142,8 @@ def main():
     parser.add_argument("--max-per-class", type=int, default=None, help="Cap images per class (speed vs. coverage tradeoff)")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--output", default="outputs/robustness_table.csv")
+    parser.add_argument("--embedding-cache-dir", default=None,
+                         help="Where to cache per-condition embeddings (resumable). Defaults to a dir next to --output.")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -86,49 +163,18 @@ def main():
     paths, labels = collect_labeled_paths(args.labeled_dir, args.max_per_class)
     print(f"Loaded {len(paths)} labeled images ({sum(1 for l in labels if l == 0)} real, {sum(1 for l in labels if l == 1)} fake)")
 
+    cache_dir = args.embedding_cache_dir or (os.path.splitext(args.output)[0] + "_embcache")
+
     print("Loading source images into memory...")
     source_images = [Image.open(p).convert("RGB") for p in paths]
 
-    rows = []
+    cache_condition_embeddings(cache_dir, source_images, labels, model, preprocess, device)
 
-    # Clean baseline (no transform) — every table needs this reference row.
-    acc, auc = evaluate_cell(source_images, labels, model, preprocess, head, device, args.threshold)
-    rows.append({"transform": "clean", "severity": "n/a", "held_out": False, "accuracy": acc, "auc": auc})
-    print(f"clean            acc={acc:.4f}  auc={auc:.4f}")
-
-    from src.transforms import HELD_OUT_TRANSFORMS
-
-    for transform_name, severities in TRANSFORM_GRID.items():
-        held_out = transform_name in HELD_OUT_TRANSFORMS
-        for severity in severities:
-            transformed = [apply_transform(img, transform_name, severity) for img in source_images]
-            acc, auc = evaluate_cell(transformed, labels, model, preprocess, head, device, args.threshold)
-            rows.append({
-                "transform": transform_name,
-                "severity": severity,
-                "held_out": held_out,
-                "accuracy": acc,
-                "auc": auc,
-            })
-            print(f"{transform_name:<15} sev={severity:<6} held_out={held_out!s:<5} acc={acc:.4f}  auc={auc:.4f}")
-
-    # Section 3.4 — stacked/combined, beyond-spec, reported separately.
-    for chain_name, steps in STACKED_CHAINS.items():
-        transformed = [apply_chain(img, steps) for img in source_images]
-        acc, auc = evaluate_cell(transformed, labels, model, preprocess, head, device, args.threshold)
-        rows.append({
-            "transform": f"STACKED:{chain_name}",
-            "severity": "+".join(f"{n}={s}" for n, s in steps),
-            "held_out": False,
-            "accuracy": acc,
-            "auc": auc,
-        })
-        print(f"STACKED:{chain_name:<30} acc={acc:.4f}  auc={auc:.4f}")
-
-    df = pd.DataFrame(rows)
+    df = score_cached_conditions(cache_dir, head, device, args.threshold)
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     df.to_csv(args.output, index=False)
-    print(f"\nWrote {len(df)}-row robustness table to {args.output}")
+    print(f"\nWrote {len(df)}-row robustness table to {args.output} (threshold={args.threshold})")
+    print(df.to_string(index=False))
 
 
 if __name__ == "__main__":
