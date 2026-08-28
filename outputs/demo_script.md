@@ -45,11 +45,13 @@ cat outputs/predictions.json
 
 **This section is the strongest evidence of genuine rigor** — most hackathon submissions report a number; showing you decomposed *why* the number is what it is is the differentiator. Don't rush it.
 
-## 6. What we'd do next (15-20s)
+## 6. What we'd do next (20-30s)
 
-**Say:** "Given more time or GPU access: calibrate the decision threshold per-condition rather than use one fixed cutoff — the model's ranking ability holds up much better than its fixed-threshold accuracy does under distortion. We also fully built and tested a LoRA fine-tuning path, including crash-safe checkpointing, but chose not to run it once we found the actual problem was calibration, not model capacity."
+**Say:** "We actually tested the obvious fix for this — raise the decision threshold to whatever maximizes validation accuracy. It helped clean accuracy a little, but made every degraded and out-of-distribution result *worse*, and the damage got bigger the harder the condition was. That told us the real problem isn't one badly-placed cutoff — it's that the model's whole confidence distribution shifts under distortion. So the actual next step is per-condition calibration or temperature scaling, which reshape that distribution instead of moving one line through it. We also fully built and tested a LoRA fine-tuning path, including crash-safe checkpointing, but chose not to run it once we confirmed the problem was calibration, not model capacity."
 
 **Show:** nothing new — talking head or the README's Limitations section as a backdrop.
+
+*(This finding came after the rest of the script was drafted — it's one more concrete tested-and-rejected result, not a speculative "we'd try this," which is worth the extra 5-10s if you're not already tight on time. If you are, the original shorter version still holds up fine; the full story is in the README and error analysis note either way.)*
 
 ---
 
@@ -62,6 +64,6 @@ cat outputs/predictions.json
 | Live inference | 1:00 | 2:00 |
 | Robustness table | 0:50 | 2:50 |
 | Error analysis | 0:50 | 3:40 |
-| What's next | 0:20 | 4:00 |
+| What's next | 0:25 | 4:05 |
 
-If you need to cut for time, cut section 6 first (it's a natural closing line even if spoken quickly) and section 2 second (the architecture claim can be folded into section 1's opening line instead). Don't cut section 5 — it's the part that shows genuine investigation rather than a leaderboard number.
+Section 6 now runs slightly over the original 4:00 target with the calibration finding included — trim it to the shorter version noted inline if you need to land closer to 4:00. If you need to cut further, cut section 6 first (it's a natural closing line even if spoken quickly, and the calibration finding lives in the README/error analysis note regardless) and section 2 second (the architecture claim can be folded into section 1's opening line instead). Don't cut section 5 — it's the part that shows genuine investigation rather than a leaderboard number.

@@ -1,0 +1,67 @@
+adaptation:
+  dropout: 0.3
+  lora:
+    rank: 16
+    target_blocks: 2
+  method: frozen_mlp
+  mlp_hidden_dim: 256
+backbone:
+  embedding_dim: 512
+  family: clip_vitb32
+  frozen: true
+  pretrained: openai
+data:
+  dataset: SID_Set
+  dedup_check: phash
+  split:
+    test: 0.15
+    train: 0.7
+    val: 0.15
+  subsample_size: 17500
+eval:
+  classification_threshold: 0.5
+paths:
+  checkpoints_dir: outputs/checkpoints
+  predictions_out: outputs/predictions.json
+  raw_data_dir: data/raw
+  robustness_table_out: outputs/robustness_table.csv
+  splits_dir: data/splits
+seed: 42
+train:
+  batch_size: 256
+  early_stopping_metric: val_auc
+  early_stopping_patience: 5
+  lr: 0.001
+  max_epochs: 50
+  optimizer: adamw
+  weight_decay: 0.0001
+transforms:
+  distortion_prob: 1.0
+  held_in:
+  - name: jpeg
+    severities:
+    - 90
+    - 70
+    - 50
+    - 30
+  - name: gaussian_blur
+    severities:
+    - 0.5
+    - 1.0
+    - 2.0
+  - name: color_jitter
+    severities:
+    - 0.2
+  - name: center_crop
+    severities:
+    - 0.8
+  held_out:
+  - name: resize
+    severities:
+    - 0.5
+    - 0.25
+  - name: gaussian_noise
+    severities:
+    - 0.02
+    - 0.05
+    - 0.1
