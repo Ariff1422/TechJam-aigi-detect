@@ -29,6 +29,13 @@ outputs/checkpoints/**
 !outputs/checkpoints/phase4_model.pt
 outputs/predictions.json
 
+# Local-only investigation scripts (inconclusive degradation-classifier
+# routing attempt, logged in PLAN.md but not part of the shipped pipeline
+# or any tracked deliverable)
+src/cache_degradation_val.py
+src/classifier_routed_calibration.py
+src/train_degradation_classifier.py
+
 # Secrets
 .env
 *.key
